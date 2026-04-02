@@ -319,6 +319,14 @@ class InfrastructureSimulator:
                         self.safety_report.invalid_grant_violations += 1
                         self.safety_report.u_turn_violations += 1
 
+                    if is_right_turn_transition(
+                        self.segments,
+                        req.incoming_segment,
+                        req.outgoing_segment,
+                    ):
+                        self.safety_report.invalid_grant_violations += 1
+                        self.safety_report.right_turn_violations += 1
+
         self.detect_collisions(vehicles)
 
     def step(
