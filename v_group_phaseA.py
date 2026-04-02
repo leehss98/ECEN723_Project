@@ -313,10 +313,28 @@ class VehicleSimulator:
             for car_id, v in self.vehicles.items()
         }
 
+    def build_vehicle_state_snapshot(self) -> Dict[str, VehicleState]:
+        """Return a snapshot as VehicleState objects for consumption by the i-group."""
+        return {
+            car_id: VehicleState(
+                car_id=car_id,
+                current_segment=v.current_segment,
+                current_slot=v.current_slot,
+                visited_B=v.visited_B,
+                visited_C=v.visited_C,
+                visited_D=v.visited_D,
+                current_target=v.current_target,
+                stopped=v.stopped,
+                request_crossing=v.request_crossing,
+                desired_next_segment=v.desired_next_segment,
+            )
+            for car_id, v in self.vehicles.items()
+        }
+
     def prepare_requests(
         self,
         congestion_map: Dict[str, int],
-    ) -> Dict[str, Dict[str, object]]:
+    ) -> Dict[str, VehicleState]:
         """
         Build the snapshot that will be sent to the i-group.
         Segment-internal movement happens here, while actual intersection crossing is applied after the i-group response arrives.
