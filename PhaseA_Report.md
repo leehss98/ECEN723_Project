@@ -203,7 +203,45 @@ The two modules exchange the following data each time step:
 
 ---
 
-## 6. Test Results
+## 6. Design Discussion
+
+This section documents the rationale behind key implementation decisions that are not immediately obvious from the specification alone.
+
+### Two directed segments per road
+
+Each bidirectional road is modeled as two independent directed segments rather than a single bidirectional object. This keeps the data model simple and uniform — every segment has exactly one direction, one origin node, and one destination node. Both groups operate on the same segment map without needing to resolve directionality at runtime, and all transition validators work without special-casing.
+
+### Starvation counter in light selection
+
+The specification requires that collisions and red-light violations be minimized, which implies traffic must flow. A purely queue-length-based light policy can permanently favor a high-traffic direction and starve a low-traffic one. The starvation counter adds a time-based bias: a direction that has been waiting without a green light accumulates weight each step, ensuring it will eventually be selected even if its queue is shorter. This is a deliberate design choice to balance throughput with fairness.
+
+### Crossing grants alongside light signals
+
+The `lights` output tells vehicles which direction is currently green, but it does not specify which individual vehicle may cross. When multiple vehicles from the same direction are queued at the same intersection, the light alone is insufficient — all of them would attempt to cross simultaneously, violating the at-most-one-crossing-per-step constraint. The `crossing_grants` signal resolves this by naming exactly one car per intersection per step. This also enables both groups to independently verify safety: the i-group checks that it only granted legal crossings, and the v-group checks that it only accepted a crossing when a grant was received.
+
+### Two-phase vehicle step
+
+The v-group separates each time step into two phases: first, vehicles advance and build crossing requests (`prepare_requests`); then, i-group output is applied to resolve intersections (`apply_i_group_output`). This mirrors the real-world asynchrony between vehicle decision-making and infrastructure response, and it ensures the snapshot sent to the i-group reflects vehicle positions before any crossing occurs — keeping the two groups' views of state consistent.
+
+### 15-slot line-of-sight limit for blocking
+
+The specification states that a vehicle can observe another vehicle ahead only within 0.5 mile and only if no third vehicle is between them. At 1/30 mile per slot, 0.5 mile corresponds to 15 slots. The blocking check therefore finds the nearest car ahead in the same segment and only halts the vehicle if that car is within 15 slots. A car more than 15 slots ahead is outside the observable range and does not impede movement.
+
+### Alphabetical tie-breaking for grants
+
+When multiple vehicles from the green direction are waiting at the same intersection, the i-group must deterministically select one. Alphabetical ordering by `car_id` is used because it is stable, reproducible across runs, and requires no additional state. This ensures that repeated executions with identical inputs produce identical outputs, which is important for verification and debugging.
+
+### Right-turn prohibition in the route planner
+
+Rather than detecting and penalizing right turns after the fact, the route planner filters them out during candidate selection. A right-turn segment is never even considered as a routing option. This approach enforces the constraint proactively and keeps the safety checker's role as a secondary audit rather than a primary enforcement mechanism. Both groups still track right-turn violations independently for cross-validation purposes.
+
+### Congestion-aware routing heuristic
+
+The route planner uses a Manhattan distance estimate over the intersection grid combined with a congestion penalty from the i-group's `congestion_map`. A full shortest-path search (e.g., Dijkstra) is deferred to Phase B integration. The heuristic is sufficient for Phase A because the grid is small (3x3 intersections), and the congestion penalty provides enough signal to avoid obviously blocked paths.
+
+---
+
+## 7. Test Results
 
 ### 6.1 i-group Test
 
