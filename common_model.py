@@ -174,3 +174,25 @@ def is_u_turn_transition(
     if not incoming.to_node.startswith("I"):
         return False
     return outgoing.to_node == incoming.from_node
+
+
+# Maps each direction to the direction that would be a right turn from it.
+_RIGHT_TURN_OF: Dict[Direction, Direction] = {
+    Direction.NORTH: Direction.EAST,
+    Direction.EAST:  Direction.SOUTH,
+    Direction.SOUTH: Direction.WEST,
+    Direction.WEST:  Direction.NORTH,
+}
+
+
+def is_right_turn_transition(
+    segments: Dict[str, Segment],
+    incoming_segment_id: str,
+    outgoing_segment_id: str,
+) -> bool:
+    """Return True when the outgoing direction is a right turn relative to the incoming direction."""
+    if not is_valid_crossing_transition(segments, incoming_segment_id, outgoing_segment_id):
+        return False
+    incoming = segments[incoming_segment_id]
+    outgoing = segments[outgoing_segment_id]
+    return outgoing.direction == _RIGHT_TURN_OF[incoming.direction]
