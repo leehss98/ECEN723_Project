@@ -119,6 +119,7 @@ class VehicleSimulator:
         self.collisions = 0
         self.illegal_direction_violations = 0
         self.u_turn_violations = 0
+        self.right_turn_violations = 0
 
     def add_vehicle(self, car_id: str) -> None:
         self.vehicles[car_id] = VehicleState(
