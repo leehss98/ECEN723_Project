@@ -114,7 +114,7 @@ Counts vehicles with `stopped = True` on segments feeding each intersection.
 
 ---
 
-## 🚗 4. v-group: Vehicle Simulator
+## 4. v-group: Vehicle Simulator
 
 ### 4.1 Architecture
 
