@@ -188,7 +188,7 @@ The **lowest-cost valid candidate** is selected.
 
 ---
 
-## 🔗 5. i-group / v-group Integration Protocol
+## 5. i-group / v-group Integration Protocol
 
 The two modules exchange the following data each time step:
 
