@@ -275,7 +275,7 @@ This section documents the rationale behind key implementation decisions through
 
 **v-group:** The no-right-turn constraint is enforced proactively in the decision procedure; a right-turn segment is never admitted as a candidate. The invariant is upheld before a semaphore wait is even issued.
 
-**i-group:** We apply a second, defensive check during request validation and in the safety audit. If a right-turn request arrives, due to a bug or an unanticipated code path — it is rejected and logged as a violation. This layered enforcement follows a **defense-in-depth** approach: the v-group prevents violations by construction; the i-group detects them if they occur.
+**i-group:** We apply a second, defensive check during request validation and in the safety audit. If a right-turn request arrives, due to a bug or an unanticipated code path, it is rejected and logged as a violation. This layered enforcement follows a **defense-in-depth** approach: the v-group prevents violations by construction; the i-group detects them if they occur.
 
 **Decision:** Right-turn transitions are excluded from the decision procedure and independently audited by both groups' safety checkers.
 
