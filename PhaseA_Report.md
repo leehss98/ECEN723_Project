@@ -7,31 +7,15 @@
 
 ---
 
-## 1. System Overview
+## 1. Code Structure
 
-This project simulates a simplified traffic system on a 3×3 grid of intersections (I00–I22) with four terminal nodes (A, B, C, D). Vehicles depart from A, visit B, C, and D in any order, and return to A. The system is split into two independent modules:
+The implementation is split into three files:
 
-- **i-group** (`i_group_phaseA.py`): Controls traffic lights and intersection crossing decisions.
-- **v-group** (`v_group_phaseA.py`): Simulates vehicle movement and routing.
+- **`common_model.py`** — shared data structures and road graph used by both groups
+- **`i_group_phaseA.py`** — infrastructure simulator (traffic lights, crossing arbitration)
+- **`v_group_phaseA.py`** — vehicle simulator (movement, routing, tour tracking)
 
-Both share a common data model (`common_model.py`) that defines the road graph, vehicle state, and message formats.
-
-### Road Layout
-
-```
-A ── I00 ── I01 ── I02 ── B
-      │       │       │
-     I10 ── I11 ── I12
-      │       │       │
-     I20 ── I21 ── I22
-      │                   │
-      D                   C
-```
-
-- Each road segment between two nodes is divided into **30 uniform slots** (slot 0 = entry, slot 29 = intersection approach).
-- Each road is **bidirectional**, modeled as two independent directed segments (e.g., `I00_to_I01` EAST and `I01_to_I00` WEST).
-- Each **time step = 2 seconds**. Per step, a car may advance one slot or stay still.
-- **Single lane per direction** — no overtaking.
+Each road between two nodes is modeled as two independent directed segments (e.g., `I00_to_I01` EAST and `I01_to_I00` WEST), with slot 0 at the entry and slot 29 at the intersection approach.
 
 ---
 
