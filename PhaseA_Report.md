@@ -203,7 +203,7 @@ The two modules exchange the following data each time step:
 
 ---
 
-## 🧪 6. Test Results
+## 6. Test Results
 
 ### 6.1 i-group Test
 
