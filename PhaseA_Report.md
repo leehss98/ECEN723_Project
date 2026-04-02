@@ -1,8 +1,8 @@
 # ECEN 723 Spring 2026: Project Phase A Report
 
-**Team ID:** _(fill in)_
+**Team ID:** _17_
 **Group:** i-group & v-group
-**Members:** _(fill in)_
+**Members:** _Hyunsoo Lee, Joonhyun Choi, Vishnu Rajagopal, Stephen Muttathil_
 **Date:** April 3, 2026
 
 ---
