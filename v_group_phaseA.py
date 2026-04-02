@@ -359,7 +359,7 @@ class VehicleSimulator:
                 self.build_crossing_request(vehicle, congestion_map)
 
         self.check_collision()
-        return self.build_vehicle_snapshot()
+        return self.build_vehicle_state_snapshot()
 
     def apply_i_group_output(
         self,
