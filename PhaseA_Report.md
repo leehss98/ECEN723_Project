@@ -21,7 +21,7 @@ Each road between two nodes is modeled as **two independent directed segments** 
 
 ---
 
-## 📦 2. Shared Data Model (`common_model.py`)
+## 2. Shared Data Model (`common_model.py`)
 
 ### Key Data Classes
 
