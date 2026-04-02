@@ -12,6 +12,7 @@ from common_model import (
     VehicleState,
     build_nodes,
     build_segments,
+    is_right_turn_transition,
     is_u_turn_transition,
     is_valid_crossing_transition,
 )
