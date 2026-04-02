@@ -9,15 +9,15 @@
 
 ## 1. Code Structure
 
-The implementation is organized into **three files**, cleanly separating shared infrastructure from each group's logic:
+The implementation is organized into **three files**, cleanly separating shared state from each group's logic:
 
 | File | Role |
 |---|---|
-| `common_model.py` | Shared data structures, road graph, and transition validators |
-| `i_group_phaseA.py` | Infrastructure simulator — traffic lights and crossing arbitration |
+| `common_model.py` | Shared data structures, road graph, and transition predicates |
+| `i_group_phaseA.py` | Infrastructure simulator — light arbitration and intersection access control |
 | `v_group_phaseA.py` | Vehicle simulator — movement, routing, and tour completion |
 
-Each road between two nodes is modeled as **two independent directed segments** (e.g., `I00_to_I01` EAST and `I01_to_I00` WEST), with **slot 0** at the entry and **slot 29** at the intersection approach.
+Each road between two nodes is modeled as **two independent directed segments** (e.g., `I00_to_I01` EAST and `I01_to_I00` WEST), with **slot 0** at the entry and **slot 29** at the intersection approach. The system advances in discrete **time steps**, where each step corresponds to a synchronized state transition across all vehicles and intersections.
 
 ---
 
@@ -27,19 +27,19 @@ Each road between two nodes is modeled as **two independent directed segments** 
 
 | Class | Purpose |
 |---|---|
-| `VehicleState` | Position (`segment` + `slot`), visit flags (B/C/D), crossing request and intent |
-| `IntersectionLightState` | Which direction (if any) currently holds the green light |
-| `CrossingRequest` | A vehicle declaring its intent to cross and desired next segment |
-| `CrossingGrant` | Infrastructure's approval or denial of a specific crossing request |
+| `VehicleState` | Encodes the full state of a vehicle: position (`segment` + `slot`), visit flags (B/C/D), and pending crossing intent |
+| `IntersectionLightState` | Records which direction (if any) currently holds the green light at an intersection |
+| `CrossingRequest` | A vehicle's **wait** on the intersection semaphore — declares intent to enter the critical section |
+| `CrossingGrant` | The infrastructure's **signal** — releases the semaphore for exactly one vehicle per intersection per step |
 | `Segment` | A directed road segment with `from_node`, `to_node`, `direction`, and `length_slots` |
 
-### Transition Validators
+### Transition Predicates
 
-Three shared helper functions enforce movement legality across both groups:
+Three shared predicates enforce movement legality and are evaluated by both groups independently:
 
-- **`is_valid_crossing_transition`** — outgoing segment must originate at the node where the incoming segment terminates
-- **`is_u_turn_transition`** — outgoing segment must not return to the node the vehicle came from
-- **`is_right_turn_transition`** — outgoing direction must not be a right turn of the incoming direction (EAST→SOUTH, SOUTH→WEST, WEST→NORTH, NORTH→EAST)
+- **`is_valid_crossing_transition`** — outgoing segment must originate at the node where the incoming segment terminates; violations indicate an illegal state transition
+- **`is_u_turn_transition`** — outgoing segment must not return to the node the vehicle came from; enforces the no-U-turn invariant
+- **`is_right_turn_transition`** — outgoing direction must not be a right turn of the incoming direction (EAST→SOUTH, SOUTH→WEST, WEST→NORTH, NORTH→EAST); enforces the no-right-turn invariant
 
 ---
 
@@ -49,36 +49,36 @@ Three shared helper functions enforce movement legality across both groups:
 
 The i-group is built around two classes:
 
-- **`IntersectionController`** — one instance per intersection; owns the light state and a per-direction **starvation counter** to prevent indefinite waiting
-- **`InfrastructureSimulator`** — the top-level coordinator; drives the full per-step pipeline and accumulates a `SafetyReport`
+- **`IntersectionController`** — one instance per intersection; owns the light state and a per-direction **starvation counter** that tracks how long each direction has been denied access, ensuring the fairness property
+- **`InfrastructureSimulator`** — the top-level coordinator; drives the per-step pipeline and accumulates a `SafetyReport` of all observed invariant violations
 
 ### 3.2 Algorithm
 
-Each call to `step(vehicles)` runs the following pipeline:
+Each call to `step(vehicles)` executes the following pipeline:
 
-**Step 1 — Identify waiting vehicles**
-`get_incoming_waiting_vehicles()` collects vehicles that are at **slot 29**, have `request_crossing = True`, and whose segment ends at an intersection.
+**Step 1 — Identify waiting processes**
+`get_incoming_waiting_vehicles()` collects all vehicles blocked at **slot 29** with `request_crossing = True` — these are processes waiting to acquire their intersection's semaphore.
 
-**Step 2 — Update traffic lights**
-For each intersection, `count_waiting_by_direction()` groups waiting vehicles by direction. `select_green_direction()` picks the winner using:
+**Step 2 — Update the guard condition**
+For each intersection, `count_waiting_by_direction()` groups blocked vehicles by direction. `select_green_direction()` evaluates the guard condition using:
 
 ```
 score(direction) = waiting_count(direction) + starvation_counter(direction)
 ```
 
-Non-winning directions with waiting vehicles increment their starvation counter; the winner resets to 0.
+The direction with the highest score is granted the green light. Non-winning directions with waiting vehicles increment their starvation counter; the winner's counter resets to 0. This scoring function guarantees the **starvation-freedom** property: no direction can be deferred indefinitely.
 
 **Step 3 — Validate and build crossing requests**
-`build_crossing_requests()` validates each vehicle's request — correct slot, valid transition, no U-turn, no right turn — and constructs a `CrossingRequest` per passing vehicle.
+`build_crossing_requests()` validates each vehicle's request against all three transition predicates. Only requests that satisfy every predicate proceed; violations are logged immediately to the safety report.
 
-**Step 4 — Grant one crossing per intersection**
-`select_one_grant()` filters valid requests to those matching the **green direction** and issues exactly **one grant**, breaking ties by `car_id` (alphabetical).
+**Step 4 — Acquire the semaphore**
+`select_one_grant()` filters valid requests to those satisfying the current guard condition (matching the green direction) and issues exactly **one grant** — a binary semaphore signal — per intersection. Ties are broken deterministically by `car_id` (lexicographic order), ensuring **deterministic arbitration**.
 
 **Step 5 — Compute congestion map**
-Counts vehicles with `stopped = True` on segments feeding each intersection.
+Counts vehicles with `stopped = True` on segments feeding each intersection — a measure of system load used by the v-group's decision procedure.
 
-**Step 6 — Safety check**
-`check_safety()` verifies all active constraints and populates the `SafetyReport`.
+**Step 6 — Verify safety invariants**
+`check_safety()` audits all active invariants and appends any violations to the `SafetyReport`.
 
 ### 3.3 Output (per step)
 
@@ -100,17 +100,17 @@ Counts vehicles with `stopped = True` on segments feeding each intersection.
 }
 ```
 
-### 3.4 Safety Properties Verified
+### 3.4 Safety Invariants Verified
 
-| Property | Mechanism |
+| Invariant | Mechanism |
 |---|---|
-| No collisions | `detect_collisions()` — scans all (segment, slot) pairs for duplicates |
-| No red-light violations | `check_safety()` — every grant must align with the green direction |
-| At most 1 green per intersection | Checked across all controllers in `check_safety()` |
-| At most 1 crossing per step | `select_one_grant()` — returns at most one grant per intersection |
-| No U-turns | `validate_request()` — calls `is_u_turn_transition()` |
-| No right turns | `validate_request()` — calls `is_right_turn_transition()` |
-| No wrong-direction transitions | `validate_request()` — calls `is_valid_crossing_transition()` |
+| Mutual exclusion — no two vehicles share a (segment, slot) | `detect_collisions()` scans all position pairs each step |
+| No red-light violation — only green-direction vehicles may cross | `check_safety()` verifies every grant aligns with the active guard condition |
+| At most one green direction per intersection | Checked across all controllers; violation indicates a simultaneous-access fault |
+| At most one crossing per intersection per step | `select_one_grant()` issues at most one semaphore signal per intersection |
+| No U-turn state transition | `validate_request()` evaluates `is_u_turn_transition()` |
+| No right-turn state transition | `validate_request()` evaluates `is_right_turn_transition()` |
+| No illegal segment transition | `validate_request()` evaluates `is_valid_crossing_transition()` |
 
 ---
 
@@ -120,35 +120,35 @@ Counts vehicles with `stopped = True` on segments feeding each intersection.
 
 The v-group is built around two classes:
 
-- **`RoutePlanner`** — stateless; selects the best next segment given current position, target node, and congestion map
-- **`VehicleSimulator`** — maintains all vehicle states; processes one time step per call and tracks tour completions and safety violations
+- **`RoutePlanner`** — a stateless decision procedure; selects the next segment given current position, target node, and the congestion map
+- **`VehicleSimulator`** — maintains the global vehicle state; advances the system by one time step per call and independently tracks all invariant violations
 
 ### 4.2 Algorithm
 
-Each call to `step(i_group_output)` runs in **two phases**:
+Each call to `step(i_group_output)` executes in **two atomic phases**, mirroring a two-phase synchronization protocol:
 
 **Phase 1 — `prepare_requests(congestion_map)`**
 
 For each vehicle:
-1. **Blocking check** (`is_front_blocked()`): if the nearest car ahead in the same segment is within **15 slots** (0.5 mile), the vehicle stays and clears its request.
-2. **Advance inside segment**: if not at slot 29, increment slot by 1.
-3. **At a terminal** (A/B/C/D): record the visit and immediately enter the next outgoing segment from `RoutePlanner`.
-4. **At slot 29 toward an intersection**: call `build_crossing_request()` — pick a next segment via `RoutePlanner` and set `request_crossing = True`.
+1. **Blocking predicate** (`is_front_blocked()`): if the nearest vehicle ahead in the same segment is within **15 slots** (0.5 mile), the process blocks and clears its pending request.
+2. **Internal state transition**: if not at slot 29, advance one slot.
+3. **Terminal node**: record the visit and immediately execute the next segment transition chosen by the decision procedure.
+4. **Intersection approach** (slot 29): invoke `build_crossing_request()` — the decision procedure selects a next segment and the vehicle issues a **wait** on the intersection semaphore by setting `request_crossing = True`.
 
-After all vehicles are processed, a **collision check** is run.
+A collision check (mutual exclusion audit) is run after all vehicles are processed.
 
 **Phase 2 — `apply_i_group_output(lights, crossing_grants)`**
 
-For each vehicle with a pending crossing request:
-1. Check for a matching grant in `crossing_grants`.
-2. **If granted**: validate transition (no wrong direction, no U-turn, no right turn), verify light consistency, and move the vehicle to slot 0 of the new segment.
-3. **If not granted**: vehicle stops at slot 29.
+For each vehicle holding a pending semaphore wait:
+1. Check whether the i-group has issued a **signal** (grant) for this vehicle.
+2. **If signaled**: evaluate all three transition predicates; if all pass, execute the crossing — the vehicle transitions to slot 0 of the new segment.
+3. **If not signaled**: the vehicle remains blocked at slot 29, awaiting the next arbitration cycle.
 
-After crossings are applied, terminal visits are recorded, completed tours are detected and the vehicle is reset to start a new tour.
+After crossings are resolved, terminal visits are recorded, completed tours are detected, and any vehicle that has satisfied the liveness condition (visited all of B, C, D, and returned to A) is reset to begin a new tour.
 
-**Route Planning**
+**Decision Procedure (Route Planning)**
 
-`choose_next_segment()` filters candidates to those passing all three validators, then scores each:
+`choose_next_segment()` filters all candidate segments through the three transition predicates, then ranks the remainder by:
 
 ```
 cost = manhattan_distance(next_node → target_node) × 2
@@ -156,14 +156,14 @@ cost = manhattan_distance(next_node → target_node) × 2
      + base_cost (10)
 ```
 
-The **lowest-cost valid candidate** is selected.
+The **lowest-cost admissible candidate** is selected. This heuristic approximates a shortest-path search and is sufficient for Phase A; a complete decision procedure is planned for Phase B.
 
 ### 4.3 Output (per step)
 
 ```python
 {
     "time_step": int,
-    "vehicles": {"car_id": {full vehicle snapshot}, ...},
+    "vehicles": {"car_id": {full state snapshot}, ...},
     "vehicles_for_i_group": {"car_id": {snapshot}, ...},
     "stats": {
         "completed_tours": int,
@@ -176,127 +176,127 @@ The **lowest-cost valid candidate** is selected.
 }
 ```
 
-### 4.4 Safety Properties Verified
+### 4.4 Safety Invariants Verified
 
-| Property | Mechanism |
+| Invariant | Mechanism |
 |---|---|
-| No collisions | `check_collision()` — scans all (segment, slot) pairs for duplicates |
-| No red-light violations | `apply_intersection_result()` — checks light direction vs grant |
-| No U-turns | `apply_intersection_result()` — calls `is_u_turn_transition()` |
-| No right turns | `apply_intersection_result()` — calls `is_right_turn_transition()` |
-| No wrong-direction transitions | `apply_intersection_result()` — calls `is_valid_crossing_transition()` |
+| Mutual exclusion — no two vehicles share a (segment, slot) | `check_collision()` audits all position pairs after each phase |
+| No red-light violation | `apply_intersection_result()` checks the guard condition against the received grant |
+| No U-turn state transition | `apply_intersection_result()` evaluates `is_u_turn_transition()` |
+| No right-turn state transition | `apply_intersection_result()` evaluates `is_right_turn_transition()` |
+| No illegal segment transition | `apply_intersection_result()` evaluates `is_valid_crossing_transition()` |
 
 ---
 
 ## 5. i-group / v-group Integration Protocol
 
-The two modules exchange the following data each time step:
+The two modules exchange the following signals each time step:
 
-| Direction | Payload | Description |
+| Direction | Signal | Semantics |
 |---|---|---|
-| v-group → i-group | `Dict[str, VehicleState]` | All vehicle positions, stopping status, crossing requests, and desired next segments |
-| i-group → v-group | `lights` | Green direction (or `None`) per intersection |
-| i-group → v-group | `crossing_grants` | One grant per intersection — identifies the specific car permitted to cross |
-| i-group → v-group | `congestion_map` | Stopped vehicle count per intersection, used by the route planner |
+| v-group → i-group | `Dict[str, VehicleState]` | Full system state snapshot — vehicle positions, blocking status, semaphore wait requests |
+| i-group → v-group | `lights` | Active guard condition — the direction whose semaphore wait may proceed |
+| i-group → v-group | `crossing_grants` | Semaphore signal — names the one vehicle per intersection that may execute its crossing |
+| i-group → v-group | `congestion_map` | Load metric — stopped vehicle count per intersection, consumed by the decision procedure |
 
-**Why grants are necessary:** the `lights` signal only specifies which *direction* is green — it does not resolve which of multiple waiting cars from that direction actually crosses. The grant makes that decision explicit and allows both groups to independently verify compliance.
+The protocol guarantees that each step is processed against a **consistent global snapshot**: the v-group freezes vehicle state before sending it to the i-group, and no crossing is executed until the i-group's semaphore signals are received and applied.
 
 ---
 
 ## 6. Design Discussion
 
-This section documents the rationale behind key implementation decisions through the lens of how the two groups negotiated their interface and resolved design trade-offs.
+This section documents the rationale behind key implementation decisions through the lens of how the two groups negotiated their shared protocol and resolved design trade-offs.
 
 ### Road representation
 
-**i-group:** We need to know the direction a vehicle is approaching from to decide which light to set. A single bidirectional segment object would force us to resolve direction at runtime for every vehicle lookup.
+**i-group:** We need to evaluate the guard condition based on the direction a vehicle is approaching from. A single bidirectional segment object would require direction resolution at runtime on every state read.
 
-**v-group:** Agreed. If every segment has exactly one direction baked in, the route planner can filter candidates by direction without any extra logic, and the transition validators stay simple.
+**v-group:** Agreed. If every segment encodes exactly one direction, the decision procedure can filter candidates statically and the transition predicates remain simple boolean functions.
 
-**Decision:** Each road is modeled as two independent directed segments. Both groups operate on the same static segment map with no ambiguity.
-
----
-
-### Why crossing grants are needed alongside light signals
-
-**v-group:** We receive the `lights` output and know which direction is green. Can we just let any vehicle in that direction cross?
-
-**i-group:** No — if two vehicles are both at slot 29 on the same green direction, you have no way to decide which one goes. Both would attempt to cross in the same step, which is a collision.
-
-**v-group:** So the grant names the specific car. That also means we can verify independently: if we ever execute a crossing without a grant, we know something went wrong on our side.
-
-**i-group:** Exactly. And if a grant goes to a vehicle that was not in the green direction, we flag that on our side. Both groups audit the same event from their own perspective.
-
-**Decision:** The i-group issues one explicit grant per intersection per step. Both groups track violations independently; their counts must match.
+**Decision:** Each road is represented as two independent directed segments. Both groups share a single static segment map with no runtime ambiguity.
 
 ---
 
-### Starvation counter in light selection
+### Intersection as a critical section — the semaphore model
 
-**v-group:** If a low-traffic direction never gets a green light, vehicles heading that way will block forever. That hurts throughput and creates deadlocks.
+**v-group:** We receive the `lights` output and know which direction satisfies the guard condition. Can we allow any vehicle in that direction to execute the crossing?
 
-**i-group:** A pure queue-length policy would always favor the busiest direction. We added a starvation counter that accumulates each step a direction is skipped. It biases the selection score toward directions that have been waiting longer, even if their queue is smaller.
+**i-group:** No — if two vehicles are both blocked at slot 29 on the same green direction, both satisfy the guard condition simultaneously. Without an explicit arbitration signal, both would attempt to enter the critical section in the same step, violating mutual exclusion and producing a collision.
 
-**Decision:** Light selection scores each direction as `waiting_count + starvation_counter`. The counter resets to zero when a direction is granted and increments otherwise.
+**v-group:** So each intersection is effectively a critical section, and the `crossing_grant` is a **binary semaphore signal** — it names the one process that acquires the resource for this step.
 
----
+**i-group:** Exactly. The `lights` output is the guard condition; the grant is the semaphore signal. A vehicle issues a **wait** by setting `request_crossing = True`; the i-group responds with a **signal** for exactly one vehicle per intersection. Both groups then independently verify that no invariant was violated — the i-group checks that only the granted vehicle executed the crossing; the v-group checks that it only crossed when it held a valid signal.
 
-### Two-phase vehicle step
-
-**i-group:** We need a consistent snapshot of all vehicle positions before we compute lights and grants. If vehicles are still moving when we read them, our decisions will be based on stale or partially-updated state.
-
-**v-group:** We handle this by splitting each step into two phases. In Phase 1, vehicles advance within their segments and submit crossing requests — that snapshot goes to you. In Phase 2, we apply your response to resolve intersections. You never see a vehicle mid-crossing.
-
-**Decision:** `prepare_requests()` runs first and produces the snapshot for the i-group. `apply_i_group_output()` runs second and consumes the i-group response. The two phases are never interleaved.
+**Decision:** Each intersection is modeled as a binary semaphore. The i-group controls the semaphore and issues at most one signal per step. Both groups audit the same events independently; their violation counts must match.
 
 ---
 
-### 15-slot line-of-sight limit for blocking
+### Starvation-freedom in light selection
 
-**i-group:** The spec says a vehicle can see another car within 0.5 mile with no car in between. That is 15 slots. Beyond that, it is outside the vehicle's observable range.
+**v-group:** A purely queue-length-based arbitration policy can permanently favor high-traffic directions. Vehicles on low-traffic approaches would never acquire the semaphore — the system would exhibit **starvation**.
 
-**v-group:** The original blocking check stopped a vehicle if any car was ahead in the segment, regardless of distance. That was too conservative — a car 25 slots ahead should not block movement.
+**i-group:** We address this with a starvation counter per direction. Each step a direction is denied the semaphore, its counter increments. The selection function scores each direction as `waiting_count + starvation_counter`, so a direction that has waited long enough will eventually outrank a busier one. This guarantees the **starvation-freedom** property: every waiting vehicle is eventually granted access.
 
-**Decision:** `is_front_blocked()` finds the nearest car ahead in the same segment and only blocks if the gap is 15 slots or fewer.
-
----
-
-### Alphabetical tie-breaking for grants
-
-**v-group:** When multiple cars are waiting from the same green direction, which one do you pick?
-
-**i-group:** We sort by `car_id` alphabetically and take the first. It is deterministic, requires no additional state, and makes repeated runs with the same input produce the same output — which matters for verification.
-
-**Decision:** Grants are awarded to the lexicographically first eligible `car_id`.
+**Decision:** The scoring function combines queue length with accumulated wait time. The counter resets on grant and increments otherwise, enforcing fairness without requiring a full scheduling proof at this phase.
 
 ---
 
-### Right-turn prohibition
+### Two-phase synchronization protocol
 
-**v-group:** We enforce this at the routing stage — the route planner never selects a right-turn segment as a candidate. The constraint is applied before a request is even formed.
+**i-group:** We require a **consistent global snapshot** of vehicle positions before computing lights and grants. If vehicles were still transitioning when we read state, our guard condition evaluation would be based on a partially-updated system state.
 
-**i-group:** We enforce it again during request validation and in the safety check. If a right-turn request somehow arrives, we reject it and log a violation.
+**v-group:** We enforce this with a two-phase step. Phase 1 advances all vehicles within their segments and freezes the state into a snapshot — this is what we send to you. Phase 2 applies your semaphore signals to resolve intersection crossings. The two phases are never interleaved; you always observe a stable state.
 
-**Decision:** Right turns are blocked proactively in the route planner and audited defensively in both groups' safety checks.
+**Decision:** `prepare_requests()` produces a consistent snapshot before any semaphore signal is consumed. `apply_i_group_output()` applies signals only after the snapshot has been transmitted. This mirrors a two-phase commit protocol for shared state.
+
+---
+
+### 15-slot observability limit
+
+**i-group:** The specification constrains a vehicle's observable state: it can detect another vehicle ahead only within 0.5 mile (15 slots) and only if no third vehicle is between them.
+
+**v-group:** The original blocking predicate was over-conservative — it treated any vehicle ahead in the same segment as blocking, regardless of distance. A vehicle 25 slots ahead is outside the observable range and should not affect the blocking decision.
+
+**Decision:** `is_front_blocked()` identifies the nearest vehicle ahead in the same segment and evaluates the predicate only if the gap is at most 15 slots. This correctly models the bounded observability constraint from the specification.
+
+---
+
+### Deterministic arbitration for semaphore signals
+
+**v-group:** When multiple vehicles satisfy the guard condition at the same intersection, the arbitration must be deterministic to allow reproducible verification runs.
+
+**i-group:** We order candidates lexicographically by `car_id` and select the first. This requires no additional state, produces identical outputs for identical inputs, and makes counterexample traces fully reproducible — a property that will be important in Phase C verification.
+
+**Decision:** Semaphore signals are awarded to the lexicographically first eligible `car_id`.
+
+---
+
+### Right-turn prohibition — proactive vs. defensive enforcement
+
+**v-group:** The no-right-turn constraint is enforced proactively in the decision procedure — a right-turn segment is never admitted as a candidate. The invariant is upheld before a semaphore wait is even issued.
+
+**i-group:** We apply a second, defensive check during request validation and in the safety audit. If a right-turn request arrives — due to a bug or an unanticipated code path — it is rejected and logged as a violation. This layered enforcement follows a **defense-in-depth** approach: the v-group prevents violations by construction; the i-group detects them if they occur.
+
+**Decision:** Right-turn transitions are excluded from the decision procedure and independently audited by both groups' safety checkers.
 
 ---
 
 ## 7. Test Results
 
-### 6.1 i-group Test
+### 7.1 i-group Test
 
-**Setup:** Three vehicles placed across the grid:
-- `car_1` — segment `A_to_I00`, slot 29, eastbound, requesting crossing to `I00_to_I01`
-- `car_2` — segment `I10_to_I11`, slot 29, eastbound, requesting crossing to `I11_to_I12`
-- `car_3` — segment `I01_to_I11`, slot 12, mid-segment, no crossing request
+**Setup:** Three vehicles placed across the grid to exercise semaphore arbitration:
+- `car_1` — segment `A_to_I00`, slot 29, eastbound, requesting entry to `I00_to_I01`
+- `car_2` — segment `I10_to_I11`, slot 29, eastbound, requesting entry to `I11_to_I12`
+- `car_3` — segment `I01_to_I11`, slot 12, mid-segment, no semaphore wait
 
 **Output (Step 1):**
 ```python
 {
   'time_step': 1,
   'lights': {
-    'I00': 'east',    # car_1 waiting → green east
-    'I11': 'east',    # car_2 waiting → green east
+    'I00': 'east',    # guard condition satisfied for eastbound
+    'I11': 'east',    # guard condition satisfied for eastbound
     'I01': None, 'I02': None, 'I10': None,
     'I12': None, 'I20': None, 'I21': None, 'I22': None
   },
@@ -314,19 +314,19 @@ This section documents the rationale behind key implementation decisions through
 }
 ```
 
-**What this confirms:**
-- Lights set to `east` exactly where eastbound vehicles are waiting
-- Exactly one grant issued per intersection
-- `car_3` at slot 12 correctly excluded — not at slot 29, no crossing request
-- All safety counters zero — no violations
+**Observations:**
+- Guard condition set to `east` at intersections with eastbound vehicles blocked at slot 29; all others remain unset (`None`)
+- Exactly one semaphore signal issued per intersection — mutual exclusion is maintained
+- `car_3` at slot 12 correctly excluded from arbitration — the semaphore wait precondition (slot 29, `request_crossing = True`) is not satisfied
+- All invariant violation counters are zero
 
 ---
 
-### 6.2 v-group Test
+### 7.2 v-group Test
 
-**Setup:** Two vehicles (`car_1`, `car_2`) both starting at `A_to_I00`, slot 0.
+**Setup:** Two vehicles (`car_1`, `car_2`) both starting at `A_to_I00`, slot 0, to exercise the blocking predicate and two-phase protocol.
 
-**Step 1 (no i-group input):**
+**Step 1 (no semaphore signals received):**
 ```python
 'vehicles': {
     'car_1': {'current_slot': 1, 'stopped': False, ...},
@@ -335,7 +335,7 @@ This section documents the rationale behind key implementation decisions through
 'stats': {'collisions': 0, 'red_light_violations': 0, ...all zeros}
 ```
 
-**Step 2 (i-group input: I00=east, grant issued to car_1):**
+**Step 2 (semaphore signal received: I00=east, car_1 granted):**
 ```python
 'vehicles': {
     'car_1': {'current_slot': 2, 'stopped': False, ...},
@@ -344,17 +344,17 @@ This section documents the rationale behind key implementation decisions through
 'stats': {'collisions': 0, 'red_light_violations': 0, ...all zeros}
 ```
 
-**What this confirms:**
-- `car_1` advances slot 0 → 1 → 2 correctly across two steps
-- `car_2` stays stopped at slot 0 — correctly blocked by `car_1` ahead within 15 slots
-- No violations across either step
+**Observations:**
+- `car_1` advances through state transitions: slot 0 → 1 → 2 across two steps
+- `car_2` remains blocked at slot 0 — the blocking predicate is satisfied since `car_1` is within 15 slots ahead in the same segment
+- No invariant violations observed across either step; mutual exclusion is maintained throughout
 
 ---
 
-## 7. Source Code
+## 8. Source Code
 
 Source code is included in the submitted repository:
 
-- `common_model.py` — shared data model and validators
-- `i_group_phaseA.py` — infrastructure simulator
-- `v_group_phaseA.py` — vehicle simulator
+- `common_model.py` — shared data model, road graph, and transition predicates
+- `i_group_phaseA.py` — infrastructure simulator with semaphore-based intersection control
+- `v_group_phaseA.py` — vehicle simulator with two-phase synchronization protocol
