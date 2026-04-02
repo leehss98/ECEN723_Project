@@ -148,17 +148,26 @@ class VehicleSimulator:
 
         vehicle.current_target = self.route_planner.get_next_target(vehicle)
 
+    # Spec: a car can see up to 0.5 mile = 15 slots ahead with no third car in between.
+    VISIBILITY_SLOTS = 15
+
     def is_front_blocked(self, vehicle: VehicleState) -> bool:
         """
-        Do not advance if another vehicle is ahead in the same segment during this step.
-        Phase A applies only a simple lead-car rule without lane changes or overtaking.
+        Block only if the nearest car ahead in the same segment is within VISIBILITY_SLOTS slots.
+        The spec limits visibility to 0.5 mile (15 slots) with no third car in between,
+        so a car more than 15 slots away is invisible and does not block movement.
         """
+        nearest_slot = None
         for other in self.vehicles.values():
             if other.car_id == vehicle.car_id:
                 continue
             if other.current_segment == vehicle.current_segment and other.current_slot > vehicle.current_slot:
-                return True
-        return False
+                if nearest_slot is None or other.current_slot < nearest_slot:
+                    nearest_slot = other.current_slot
+
+        if nearest_slot is None:
+            return False
+        return (nearest_slot - vehicle.current_slot) <= self.VISIBILITY_SLOTS
 
     def build_crossing_request(
         self,
