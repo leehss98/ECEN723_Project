@@ -242,6 +242,7 @@ Three test scenarios exercise i-group behavior: a basic arbitration test, a star
 ```
 
 **Observations:**
+
 - Guard condition is set to `east` at exactly those intersections where an eastbound vehicle is blocked at slot 29; all other lights remain `None`
 - Exactly one semaphore signal is issued per active intersection; mutual exclusion holds
 - `car_3` at slot 12 is correctly excluded from arbitration; the semaphore wait precondition (slot 29, `request_crossing = True`) is not satisfied
@@ -270,6 +271,7 @@ Step 4: light=east   grants=[{'intersection_id': 'I11', 'car_id': 'car_east',  '
 ```
 
 **Observations:**
+
 - The light alternates between the two directions because equal queue lengths make the starvation counter the tiebreaker
 - Each denied direction increments its counter by 1; the winning direction resets to 0
 - Neither direction is ever denied for two consecutive steps; starvation-freedom holds
@@ -298,6 +300,7 @@ safety:  {
 ```
 
 **Observations:**
+
 - `car_ok` receives the only grant; its crossing passes all three transition predicates
 - `car_uturn` is rejected by `validate_request()` and logged as a U-turn violation; no grant is issued at I01
 - `car_right` is rejected and logged as a right-turn violation; no grant is issued at I11
@@ -345,6 +348,7 @@ All violation counters: zero across both groups for all 50 steps
 ```
 
 **Observations:**
+
 - At step 30, the crossing request fires and the i-group immediately sets the guard condition and issues a grant in the same step
 - At step 31, `car_1` transitions atomically to slot 0 of `I00_to_I01`; one step per crossing, exactly as required
 - `car_2` follows the same path; the i-group issues a separate independent grant

@@ -59,6 +59,7 @@ Each call to `step(i_group_output)` executes in two atomic phases, mirroring a t
 **Phase 1: `prepare_requests(congestion_map)`**
 
 For each vehicle:
+
 1. **Blocking predicate** (`is_front_blocked()`): if the nearest vehicle ahead in the same segment is within 15 slots (0.5 mile), the process blocks and clears its pending request.
 2. **Internal state transition**: if not at slot 29, advance one slot.
 3. **Terminal node**: record the visit and immediately execute the next segment transition chosen by the decision procedure.
@@ -69,6 +70,7 @@ A collision check (mutual exclusion audit) is run after all vehicles are process
 **Phase 2: `apply_i_group_output(lights, crossing_grants)`**
 
 For each vehicle holding a pending semaphore wait:
+
 1. Check whether the i-group has issued a signal (grant) for this vehicle.
 2. **If signaled**: evaluate all three transition predicates; if all pass, execute the crossing; the vehicle transitions to slot 0 of the new segment.
 3. **If not signaled**: the vehicle remains blocked at slot 29, awaiting the next arbitration cycle.
@@ -236,6 +238,7 @@ Step 2 (i-group signal: I00=east, car_1 granted):
 ```
 
 **Observations:**
+
 - `car_1` advances: slot 0 to 1 to 2 across two steps
 - `car_2` blocks at slot 0 because `car_1` is within 15 slots ahead in the same segment; the blocking predicate fires
 - The grant for `car_1` at I00 in Step 2 does not produce a crossing because `car_1` has not yet reached slot 29; the signal is correctly ignored
@@ -282,6 +285,7 @@ All violation counters: zero across both groups for all 50 steps
 ```
 
 **Observations:**
+
 - `car_1` reaches slot 29 after 29 steps (one slot per step, unblocked once `car_2` falls 15 slots behind)
 - At step 30, the crossing request fires; the two-phase protocol ensures Phase 1 state is frozen before Phase 2 applies the grant
 - At step 31, `car_1` transitions atomically to slot 0 of `I00_to_I01`; one step per crossing, exactly as required
